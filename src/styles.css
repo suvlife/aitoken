@@ -875,3 +875,165 @@ th {
   border-radius: 8px;
   padding: 8px;
 }
+
+.pdfReportHost {
+  position: absolute;
+  top: 0;
+  left: -12000px;
+  width: 1120px;
+  pointer-events: none;
+  background: #ffffff;
+}
+
+.pdfSection {
+  width: 1120px;
+  padding: 34px 38px;
+  color: #172033;
+  background: #ffffff;
+  font-family:
+    Inter, "SF Pro Display", "PingFang SC", "Microsoft YaHei", Arial, sans-serif;
+}
+
+.pdfSection + .pdfSection {
+  border-top: 1px solid #e5eaf1;
+}
+
+.pdfSection h1,
+.pdfSection h2,
+.pdfSection p {
+  margin: 0;
+}
+
+.pdfSection h1 {
+  max-width: 760px;
+  font-size: 34px;
+  line-height: 1.2;
+  letter-spacing: 0;
+}
+
+.pdfSection h2 {
+  margin-bottom: 16px;
+  color: #0f172a;
+  font-size: 23px;
+  line-height: 1.25;
+}
+
+.pdfSection h2:not(:first-child) {
+  margin-top: 28px;
+}
+
+.pdfEyebrow {
+  margin-bottom: 10px !important;
+  color: #059669;
+  font-size: 13px;
+  font-weight: 700;
+  text-transform: uppercase;
+}
+
+.pdfMetaGrid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 9px 18px;
+  margin-top: 22px;
+  color: #475467;
+  font-size: 14px;
+}
+
+.pdfKpiGrid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 12px;
+  margin-top: 26px;
+}
+
+.pdfKpiGrid article {
+  min-height: 112px;
+  border: 1px solid #d7dee8;
+  border-radius: 8px;
+  padding: 14px;
+  background: #f8fafc;
+}
+
+.pdfKpiGrid span,
+.pdfKpiGrid small {
+  display: block;
+  color: #667085;
+  line-height: 1.45;
+}
+
+.pdfKpiGrid strong {
+  display: block;
+  margin: 8px 0;
+  color: #0f172a;
+  font-size: 22px;
+  line-height: 1.15;
+}
+
+.pdfCallout,
+.pdfFormulaBox {
+  margin-top: 18px;
+  border: 1px solid #b7e3d4;
+  border-radius: 8px;
+  padding: 14px 16px;
+  background: #f0fdfa;
+}
+
+.pdfCallout strong,
+.pdfFormulaBox strong {
+  display: block;
+  margin-bottom: 7px;
+  color: #047857;
+  font-size: 15px;
+}
+
+.pdfCallout p,
+.pdfFormulaBox p {
+  color: #344054;
+  font-size: 13px;
+  line-height: 1.65;
+}
+
+.pdfTable {
+  width: 100%;
+  min-width: 0;
+  border-collapse: collapse;
+  table-layout: fixed;
+  border: 1px solid #d7dee8;
+}
+
+.pdfTable th,
+.pdfTable td {
+  border: 1px solid #d7dee8;
+  padding: 10px 11px;
+  color: #243044;
+  background: #ffffff;
+  font-size: 13px;
+  line-height: 1.48;
+  vertical-align: top;
+  word-break: break-word;
+}
+
+.pdfTable th {
+  color: #0f172a;
+  background: #eef4f7;
+  font-weight: 700;
+}
+
+.pdfTableCompact th,
+.pdfTableCompact td {
+  padding: 8px 7px;
+  font-size: 11px;
+  line-height: 1.42;
+}
+
+.pdfTotalRow td {
+  color: #0f172a;
+  background: #f8fafc;
+  font-weight: 700;
+}
+
+.pdfTwoCol {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+}

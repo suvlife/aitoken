@@ -165,6 +165,7 @@ export default function App() {
   const [isRefreshing, setIsRefreshing] = useState(false);
   const [refreshNote, setRefreshNote] = useState("默认价格已按公开资料预置，可随时手动覆盖。");
   const reportRef = useRef<HTMLDivElement>(null);
+  const pdfReportRef = useRef<HTMLDivElement>(null);
   const controlPanelRef = useRef<HTMLElement>(null);
 
   const result = useMemo(() => calculateScenario(scenario), [scenario]);
@@ -319,34 +320,62 @@ export default function App() {
   };
 
   const exportPdf = async () => {
-    if (!reportRef.current) return;
-    const target = reportRef.current;
-    const canvas = await html2canvas(target, {
-      scale: 2,
-      backgroundColor: "#f6f8fb",
-      useCORS: true,
-      windowWidth: target.scrollWidth,
-      windowHeight: target.scrollHeight
-    });
+    if (!pdfReportRef.current) return;
+    const sections = Array.from(pdfReportRef.current.querySelectorAll<HTMLElement>(".pdfSection"));
+    if (sections.length === 0) return;
+
     const pdf = new jsPDF("p", "mm", "a4");
-    const imgData = canvas.toDataURL("image/png");
     const pageWidth = 210;
     const pageHeight = 297;
-    const imgHeight = (canvas.height * pageWidth) / canvas.width;
-    let heightLeft = imgHeight;
-    let position = 0;
+    const margin = 8;
+    const renderWidth = pageWidth - margin * 2;
+    const renderHeight = pageHeight - margin * 2;
+    let hasPage = false;
 
-    pdf.addImage(imgData, "PNG", 0, position, pageWidth, imgHeight, undefined, "FAST");
-    heightLeft -= pageHeight;
+    for (const section of sections) {
+      const canvas = await html2canvas(section, {
+        scale: 2,
+        backgroundColor: "#ffffff",
+        useCORS: true,
+        windowWidth: section.scrollWidth,
+        windowHeight: section.scrollHeight
+      });
 
-    while (heightLeft > 0) {
-      position -= pageHeight;
-      pdf.addPage();
-      pdf.addImage(imgData, "PNG", 0, position, pageWidth, imgHeight, undefined, "FAST");
-      heightLeft -= pageHeight;
+      const sliceHeight = Math.floor((renderHeight * canvas.width) / renderWidth);
+      let offset = 0;
+
+      while (offset < canvas.height) {
+        const currentSliceHeight = Math.min(sliceHeight, canvas.height - offset);
+        const pageCanvas = document.createElement("canvas");
+        pageCanvas.width = canvas.width;
+        pageCanvas.height = currentSliceHeight;
+        const context = pageCanvas.getContext("2d");
+        if (!context) break;
+
+        context.drawImage(
+          canvas,
+          0,
+          offset,
+          canvas.width,
+          currentSliceHeight,
+          0,
+          0,
+          canvas.width,
+          currentSliceHeight
+        );
+
+        if (hasPage) {
+          pdf.addPage();
+        }
+        hasPage = true;
+
+        const pageImageHeight = (currentSliceHeight * renderWidth) / canvas.width;
+        pdf.addImage(pageCanvas.toDataURL("image/png"), "PNG", margin, margin, renderWidth, pageImageHeight, undefined, "FAST");
+        offset += currentSliceHeight;
+      }
     }
 
-    pdf.save(`国产AI-Tokens工厂ROI-${scenario.gpuCount}卡.pdf`);
+    pdf.save(`AI-Tokens工厂测算报告-${scenario.gpuCount}卡.pdf`);
   };
 
   const costPie = [
@@ -408,6 +437,25 @@ export default function App() {
       : 0;
   const averageInputOutputRatio =
     result.totalAnnualOutputTokens > 0 ? result.totalAnnualInputTokens / result.totalAnnualOutputTokens : 0;
+  const generatedAt = new Date().toLocaleString("zh-CN", { hour12: false });
+  const capexRows = [
+    { item: "GPU卡", basis: `${scenario.gpuCount.toLocaleString()}张 × ${formatMoney(scenario.accelerator.unitPriceRmb)}/张`, amount: result.costs.gpuCapex },
+    { item: "服务器", basis: `${result.sizing.serverCount.toLocaleString()}台 × ${formatMoney(scenario.infra.serverBasePriceRmb)}/台非GPU成本`, amount: result.costs.serverCapex },
+    { item: "H3C网络", basis: `${result.sizing.leafSwitches}台Leaf + ${result.sizing.spineSwitches}台Spine + 光模块/光纤/管理网`, amount: result.costs.networkCapex },
+    { item: "高性能存储", basis: `${formatPb(result.sizing.rawStorageTb)} 原始容量 × ${formatMoney(scenario.infra.storagePriceRmbPerTb)}/TB`, amount: result.costs.storageCapex },
+    { item: "机柜配套", basis: `${result.sizing.rackCount.toLocaleString()}柜，含基础建设、PDU、柜内线缆辅材`, amount: result.costs.rackCapex },
+    { item: "实施与预备", basis: `部署实施 + 预备费，按工程参数计提`, amount: result.costs.deploymentCapex + result.costs.contingencyCapex }
+  ];
+  const engineeringRows = [
+    { item: "服务器台数", value: `${result.sizing.serverCount.toLocaleString()}台`, note: `${scenario.infra.cardsPerServer}张卡/台` },
+    { item: "单台服务器", value: `${scenario.infra.cardsPerServer}x ${scenario.accelerator.name}`, note: "双CPU、2TB DDR5、8x NVMe、2x400G NIC" },
+    { item: "网络型号", value: `${scenario.infra.leafSwitchModel} / ${scenario.infra.spineSwitchModel}`, note: `${scenario.infra.leafSwitchPortSpec}；${scenario.infra.spineSwitchPortSpec}` },
+    { item: "光模块", value: `${result.sizing.opticalEndpoints.toLocaleString()}个`, note: `${scenario.infra.opticalModuleModel}，服务器-Leaf与Leaf-Spine两端合计` },
+    { item: "光纤链路", value: `${result.sizing.fiberCableLinks.toLocaleString()}条`, note: `服务器-Leaf ${result.sizing.serverLeafCableLinks.toLocaleString()}条，Leaf-Spine ${result.sizing.leafSpineLinks.toLocaleString()}条` },
+    { item: "机柜数量", value: `${result.sizing.rackCount.toLocaleString()}柜`, note: `按${scenario.infra.rackPowerKw}kW/柜与${scenario.infra.serversPerRack}台/柜双约束` },
+    { item: "存储容量", value: `${formatPb(result.sizing.usableStorageTb)}可用 / ${formatPb(result.sizing.rawStorageTb)}原始`, note: `按${scenario.infra.storageTbPerCard.toFixed(2)}TB/卡、冗余系数${scenario.infra.storageRedundancyFactor.toFixed(2)}` },
+    { item: "设施功率", value: `${result.sizing.facilityPowerKw.toFixed(0)}kW`, note: `IT功率${result.sizing.itPowerKw.toFixed(0)}kW × PUE ${scenario.infra.pue.toFixed(2)}` }
+  ];
 
   return (
     <div className="appShell" ref={reportRef}>
@@ -1206,6 +1254,289 @@ export default function App() {
           </section>
         </section>
       </main>
+
+      <div className="pdfReportHost" ref={pdfReportRef} aria-hidden="true">
+        <section className="pdfSection pdfCover">
+          <p className="pdfEyebrow">AI Tokens Factory Investment Report</p>
+          <h1>国产AI计算卡智算集群投资收益测算报告</h1>
+          <div className="pdfMetaGrid">
+            <span>生成时间：{generatedAt}</span>
+            <span>测算规模：{scenario.gpuCount.toLocaleString()}张 {scenario.accelerator.name}</span>
+            <span>测算周期：{scenario.years}年</span>
+            <span>价格口径：市场价/手动价混合，可追溯来源</span>
+          </div>
+          <div className="pdfKpiGrid">
+            <article>
+              <span>总CAPEX</span>
+              <strong>{formatMoney(result.costs.totalCapex)}</strong>
+              <small>5年直线折旧：{formatMoney(result.costs.annualDepreciation)}/年</small>
+            </article>
+            <article>
+              <span>年OPEX</span>
+              <strong>{formatMoney(result.costs.annualOpex)}</strong>
+              <small>含水电、机柜租赁、运维、软件、专线安全</small>
+            </article>
+            <article>
+              <span>年输出Tokens</span>
+              <strong>{formatTokens(result.totalAnnualOutputTokens)}</strong>
+              <small>工程上限：{formatTokens(result.totalAnnualEngineeringOutputTokens)}</small>
+            </article>
+            <article>
+              <span>{scenario.years}年Tokens净收入</span>
+              <strong>{formatMoney(horizonTokenRevenue)}</strong>
+              <small>回本：{paybackText(result.tokenPaybackYear)}</small>
+            </article>
+            <article>
+              <span>{scenario.years}年租卡净收入</span>
+              <strong>{formatMoney(horizonRentalRevenue)}</strong>
+              <small>回本：{paybackText(result.rentalPaybackYear)}</small>
+            </article>
+            <article>
+              <span>末年现金ROI</span>
+              <strong>Tokens {(lastYear.tokenRoi * 100).toFixed(1)}%</strong>
+              <small>租卡 {(lastYear.rentalRoi * 100).toFixed(1)}%</small>
+            </article>
+          </div>
+          <div className="pdfCallout">
+            <strong>核心说明</strong>
+            <p>
+              本报告按工程产能、实际利用率、可售卖率、成交折扣、收入扣减、年度OPEX和折旧分别测算。现金ROI先扣一次性CAPEX，再扣每年OPEX；折旧进入年度会计利润，不作为现金流重复扣减。
+            </p>
+          </div>
+        </section>
+
+        <section className="pdfSection">
+          <h2>一、投资成本CAPEX测算</h2>
+          <table className="pdfTable">
+            <thead>
+              <tr>
+                <th>成本项</th>
+                <th>计算依据</th>
+                <th>金额</th>
+              </tr>
+            </thead>
+            <tbody>
+              {capexRows.map((row) => (
+                <tr key={row.item}>
+                  <td>{row.item}</td>
+                  <td>{row.basis}</td>
+                  <td>{formatMoney(row.amount)}</td>
+                </tr>
+              ))}
+              <tr className="pdfTotalRow">
+                <td>合计</td>
+                <td>一次性建设投资总额</td>
+                <td>{formatMoney(result.costs.totalCapex)}</td>
+              </tr>
+            </tbody>
+          </table>
+          <h2>二、年度运营成本OPEX测算</h2>
+          <table className="pdfTable">
+            <thead>
+              <tr>
+                <th>运营成本项</th>
+                <th>计算公式/依据</th>
+                <th>年度金额</th>
+              </tr>
+            </thead>
+            <tbody>
+              {opexItems.map((row) => (
+                <tr key={row.name}>
+                  <td>{row.name}</td>
+                  <td>{row.note}</td>
+                  <td>{formatMoney(row.value)}</td>
+                </tr>
+              ))}
+              <tr className="pdfTotalRow">
+                <td>合计</td>
+                <td>年度OPEX，不含折旧和一次性CAPEX</td>
+                <td>{formatMoney(result.costs.annualOpex)}</td>
+              </tr>
+            </tbody>
+          </table>
+        </section>
+
+        <section className="pdfSection">
+          <h2>三、年度收入、成本、利润与现金流</h2>
+          <table className="pdfTable pdfTableCompact">
+            <thead>
+              <tr>
+                <th>年份</th>
+                <th>Tokens官方价收入</th>
+                <th>Tokens净收入</th>
+                <th>租卡净收入</th>
+                <th>OPEX</th>
+                <th>折旧</th>
+                <th>Tokens会计利润</th>
+                <th>租卡会计利润</th>
+                <th>Tokens累计现金流</th>
+                <th>租卡累计现金流</th>
+                <th>现金ROI</th>
+              </tr>
+            </thead>
+            <tbody>
+              {result.yearly.map((row) => (
+                <tr key={row.year}>
+                  <td>Y{row.year}</td>
+                  <td>{formatMoney(row.tokenListRevenue)}</td>
+                  <td>{formatMoney(row.tokenRevenue)}</td>
+                  <td>{formatMoney(row.rentalRevenue)}</td>
+                  <td>{formatMoney(row.opex)}</td>
+                  <td>{formatMoney(row.depreciation)}</td>
+                  <td>{formatMoney(row.tokenAccountingProfit)}</td>
+                  <td>{formatMoney(row.rentalAccountingProfit)}</td>
+                  <td>{formatMoney(row.tokenCumulativeCashFlow)}</td>
+                  <td>{formatMoney(row.rentalCumulativeCashFlow)}</td>
+                  <td>{(row.tokenRoi * 100).toFixed(1)}% / {(row.rentalRoi * 100).toFixed(1)}%</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+          <div className="pdfFormulaBox">
+            <strong>年度滚动逻辑</strong>
+            <p>
+              Y1使用当前模型产能和价格；Y2起按Token需求增长 {toPercent(scenario.financial.tokenDemandGrowthRate)} 与Token价格年降 {toPercent(scenario.financial.tokenPriceErosionRate)}滚动。净收入 = 官方价收入 × 官方价成交系数 {tokenPriceRealizationRate.toFixed(2)} × 扣减后留存 {(1 - revenueDeductionRate).toFixed(2)}，当前约等于官方价的 {(netRevenueFactor * 100).toFixed(1)}%。
+            </p>
+          </div>
+        </section>
+
+        <section className="pdfSection">
+          <h2>四、模型部署、Tokens产能与售卖单价</h2>
+          <table className="pdfTable pdfTableCompact">
+            <thead>
+              <tr>
+                <th>模型</th>
+                <th>价格模式</th>
+                <th>分配卡数</th>
+                <th>参数/活跃</th>
+                <th>输入价</th>
+                <th>输出价</th>
+                <th>输入:输出</th>
+                <th>工程TPS/卡</th>
+                <th>实际TPS/卡</th>
+                <th>年输出</th>
+                <th>年收入</th>
+              </tr>
+            </thead>
+            <tbody>
+              {scenario.models.map((model) => {
+                const modelResult = result.models.find((item) => item.id === model.id);
+                return (
+                  <tr key={model.id}>
+                    <td>{model.name}</td>
+                    <td>{(model.priceMode ?? "market") === "manual" ? "手动价" : "市场价"}</td>
+                    <td>{model.allocatedCards.toLocaleString()}</td>
+                    <td>{model.totalParamsB}B / {model.activeParamsB}B</td>
+                    <td>{model.inputPricePerMTok.toFixed(2)}元/百万</td>
+                    <td>{model.outputPricePerMTok.toFixed(2)}元/百万</td>
+                    <td>{model.inputToOutputRatio.toFixed(2)}</td>
+                    <td>{modelResult?.engineeringTpsPerCard.toFixed(1) ?? "-"}</td>
+                    <td>{modelResult?.practicalTpsPerCard.toFixed(1) ?? "-"}</td>
+                    <td>{modelResult ? formatTokens(modelResult.annualOutputTokens) : "-"}</td>
+                    <td>{modelResult ? formatMoney(modelResult.annualRevenue) : "-"}</td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+          <div className="pdfFormulaBox">
+            <strong>Tokens产能口径</strong>
+            <p>
+              当前组合工程上限为 {formatTokens(result.totalAnnualEngineeringOutputTokens)} 输出tokens/年；实际输出 = 工程上限 × 集群利用率 {toPercent(scenario.efficiency.servingUtilization)} × 可售卖率 {toPercent(scenario.efficiency.sellThroughRate)} × 可用性 {toPercent(scenario.efficiency.availability)} = {formatTokens(result.totalAnnualOutputTokens)}。输入tokens按各模型输出tokens乘以输入:输出比例汇总，当前输入 {formatTokens(result.totalAnnualInputTokens)}，加权比例约 {averageInputOutputRatio.toFixed(2)}。
+            </p>
+          </div>
+        </section>
+
+        <section className="pdfSection">
+          <h2>五、服务器、H3C网络、存储、机柜与功耗配置</h2>
+          <table className="pdfTable">
+            <thead>
+              <tr>
+                <th>项目</th>
+                <th>测算结果</th>
+                <th>说明</th>
+              </tr>
+            </thead>
+            <tbody>
+              {engineeringRows.map((row) => (
+                <tr key={row.item}>
+                  <td>{row.item}</td>
+                  <td>{row.value}</td>
+                  <td>{row.note}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+          <div className="pdfTwoCol">
+            <div className="pdfFormulaBox">
+              <strong>水电成本</strong>
+              <p>
+                年用电量 {result.sizing.annualEnergyKwh.toLocaleString(undefined, { maximumFractionDigits: 0 })} kWh × 电价 {scenario.infra.electricityPriceRmbPerKwh.toFixed(2)} 元/kWh = 电费 {formatMoney(result.costs.annualElectricityCost)}；冷却/补水按电费的 {(scenario.infra.waterCostRateOfElectricity * 100).toFixed(1)}% = {formatMoney(result.costs.annualWaterCost)}。
+              </p>
+            </div>
+            <div className="pdfFormulaBox">
+              <strong>机柜与辅材</strong>
+              <p>
+                机柜基础建设默认不含PDU；PDU、机柜内线缆、电源线、理线、标签等分项计入机柜配套CAPEX。光模块数量按链路两端计算，光纤辅材按链路条数计算。
+              </p>
+            </div>
+          </div>
+        </section>
+
+        <section className="pdfSection">
+          <h2>六、公式诊断表</h2>
+          <table className="pdfTable">
+            <thead>
+              <tr>
+                <th>公式项</th>
+                <th>计算公式</th>
+                <th>当前值</th>
+                <th>诊断说明</th>
+              </tr>
+            </thead>
+            <tbody>
+              {result.formulas.map((line) => (
+                <tr key={line.title}>
+                  <td>{line.title}</td>
+                  <td>{line.formula}</td>
+                  <td>{line.value}</td>
+                  <td>{line.note}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </section>
+
+        <section className="pdfSection">
+          <h2>七、价格来源与测算边界</h2>
+          <table className="pdfTable">
+            <thead>
+              <tr>
+                <th>来源</th>
+                <th>截至日期</th>
+                <th>说明</th>
+                <th>链接</th>
+              </tr>
+            </thead>
+            <tbody>
+              {defaults.sources.map((source) => (
+                <tr key={source.url}>
+                  <td>{source.label}</td>
+                  <td>{source.asOf}</td>
+                  <td>{source.note}</td>
+                  <td>{source.url}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+          <div className="pdfCallout">
+            <strong>边界提示</strong>
+            <p>
+              本工具用于投资测算和方案比较，不等同于正式采购报价或承诺收益。最终项目应结合实际机房选址、集采合同、服务器BOM、网络拓扑、维保周期、售卖合同、税务处理与融资成本复核。
+            </p>
+          </div>
+        </section>
+      </div>
     </div>
   );
 }
