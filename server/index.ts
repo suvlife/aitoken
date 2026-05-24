@@ -1,11 +1,16 @@
 import cors from "cors";
 import express from "express";
 import * as cheerio from "cheerio";
+import { execFile } from "node:child_process";
+import { promisify } from "node:util";
 import { marketDefaults } from "../src/lib/marketData.js";
 import type { MarketDefaults } from "../src/lib/types.js";
 
 const PORT = Number(process.env.PORT ?? 8787);
 const app = express();
+const execFileAsync = promisify(execFile);
+const USER_AGENT =
+  "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124 Safari/537.36";
 
 app.use(cors());
 app.use(express.json({ limit: "2mb" }));
@@ -17,11 +22,15 @@ type CollectionStatus = {
   note: string;
 };
 
-const fetchText = async (url: string) => {
+const htmlToText = (html: string) => {
+  const $ = cheerio.load(html);
+  return $("body").text().replace(/\s+/g, " ").trim();
+};
+
+const fetchTextByFetch = async (url: string) => {
   const response = await fetch(url, {
     headers: {
-      "user-agent":
-        "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124 Safari/537.36"
+      "user-agent": USER_AGENT
     }
   });
 
@@ -30,8 +39,30 @@ const fetchText = async (url: string) => {
   }
 
   const html = await response.text();
-  const $ = cheerio.load(html);
-  return $("body").text().replace(/\s+/g, " ").trim();
+  return htmlToText(html);
+};
+
+const fetchTextByCurl = async (url: string) => {
+  const { stdout } = await execFileAsync(
+    "curl",
+    ["-L", "--max-time", "20", "-A", USER_AGENT, "-sS", url],
+    { maxBuffer: 12 * 1024 * 1024 }
+  );
+  return htmlToText(stdout);
+};
+
+const errorMessage = (error: unknown) => (error instanceof Error ? error.message : "unknown error");
+
+const fetchText = async (url: string) => {
+  try {
+    return await fetchTextByFetch(url);
+  } catch (fetchError) {
+    try {
+      return await fetchTextByCurl(url);
+    } catch (curlError) {
+      throw new Error(`fetch失败：${errorMessage(fetchError)}；curl兜底失败：${errorMessage(curlError)}`);
+    }
+  }
 };
 
 const getNearby = (text: string, marker: string, length = 900) => {
@@ -190,7 +221,7 @@ app.get("/api/market/refresh", async (_req, res) => {
           note: "已拉取页面文本并尝试解析；未匹配到的字段保留默认值。"
         });
       } catch (error) {
-        const message = error instanceof Error ? error.message : "unknown error";
+        const message = errorMessage(error);
         warnings.push(`${target.label} 采集失败：${message}`);
         collection.push({
           label: target.label,

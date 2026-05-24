@@ -38,7 +38,7 @@ import {
 } from "recharts";
 import { calculateScenario, clampNumber, formatMoney, formatTokens } from "./lib/calculator";
 import { marketDefaults } from "./lib/marketData";
-import type { MarketDefaults, ModelProfile, Scenario } from "./lib/types";
+import type { MarketDefaults, ModelPriceMode, ModelProfile, Scenario } from "./lib/types";
 
 const COLORS = ["#059669", "#d97706", "#dc2626", "#2563eb", "#65a30d", "#7c3aed", "#0891b2"];
 const CHART_GRID = "#e2e8f0";
@@ -55,7 +55,7 @@ const createScenario = (defaults: MarketDefaults): Scenario => ({
   years: 5,
   gpuCount: 10000,
   accelerator: { ...defaults.accelerators[0] },
-  models: defaults.models.map((model) => ({ ...model })),
+  models: defaults.models.map((model) => ({ ...model, priceMode: model.priceMode ?? "market" })),
   infra: { ...defaults.infra },
   efficiency: { ...defaults.efficiency },
   financial: { ...defaults.financial }
@@ -64,6 +64,8 @@ const createScenario = (defaults: MarketDefaults): Scenario => ({
 const toYi = (value: number) => Number((value / 100000000).toFixed(2));
 const toPercent = (value: number) => `${(value * 100).toFixed(1)}%`;
 const formatPb = (tb: number) => `${(tb / 1000).toLocaleString(undefined, { maximumFractionDigits: 2 })} PB`;
+const manualPriceSource = (inputPricePerMTok: number, outputPricePerMTok: number) =>
+  `用户手动设置：输入${inputPricePerMTok}元/百万tokens，输出${outputPricePerMTok}元/百万tokens；同步市场价格不会覆盖。`;
 
 function NumberField({
   label,
@@ -215,6 +217,55 @@ export default function App() {
     }));
   };
 
+  const updateModelTokenPrice = (
+    id: string,
+    patch: Pick<Partial<ModelProfile>, "inputPricePerMTok" | "outputPricePerMTok">
+  ) => {
+    setScenario((previous) => ({
+      ...previous,
+      models: previous.models.map((model) => {
+        if (model.id !== id) return model;
+        const nextModel = { ...model, ...patch };
+        return {
+          ...nextModel,
+          priceMode: "manual",
+          priceSource: manualPriceSource(nextModel.inputPricePerMTok, nextModel.outputPricePerMTok)
+        };
+      })
+    }));
+  };
+
+  const applyMarketPrice = (id: string) => {
+    const marketModel = defaults.models.find((model) => model.id === id);
+    if (!marketModel) return;
+    updateModel(id, {
+      inputPricePerMTok: marketModel.inputPricePerMTok,
+      outputPricePerMTok: marketModel.outputPricePerMTok,
+      priceMode: "market",
+      priceSource: marketModel.priceSource
+    });
+  };
+
+  const updateModelPriceMode = (id: string, priceMode: ModelPriceMode) => {
+    if (priceMode === "market") {
+      applyMarketPrice(id);
+      return;
+    }
+
+    setScenario((previous) => ({
+      ...previous,
+      models: previous.models.map((model) =>
+        model.id === id
+          ? {
+              ...model,
+              priceMode: "manual",
+              priceSource: manualPriceSource(model.inputPricePerMTok, model.outputPricePerMTok)
+            }
+          : model
+      )
+    }));
+  };
+
   const resetDefaults = () => {
     setScenario(createScenario(defaults));
     setRefreshNote("已恢复当前默认价格与工程参数。");
@@ -224,11 +275,15 @@ export default function App() {
     setIsRefreshing(true);
     try {
       const response = await fetch("/api/market/refresh");
+      if (!response.ok) {
+        throw new Error(`HTTP ${response.status}`);
+      }
       const payload = (await response.json()) as {
         defaults: MarketDefaults;
         collection: { label: string; status: string; note: string }[];
         warnings: string[];
       };
+      const protectedManualCount = scenario.models.filter((model) => model.priceMode === "manual").length;
       setDefaults(payload.defaults);
       setScenario((previous) => ({
         ...previous,
@@ -238,18 +293,23 @@ export default function App() {
         },
         models: previous.models.map((model) => {
           const refreshed = payload.defaults.models.find((item) => item.id === model.id);
+          if (model.priceMode === "manual") {
+            return model;
+          }
           return refreshed
             ? {
                 ...model,
                 inputPricePerMTok: refreshed.inputPricePerMTok,
                 outputPricePerMTok: refreshed.outputPricePerMTok,
+                priceMode: "market",
                 priceSource: refreshed.priceSource
               }
             : model;
         })
       }));
       const fetched = payload.collection.filter((item) => item.status === "fetched").length;
-      setRefreshNote(`已采集 ${fetched}/${payload.collection.length} 个外部价格源；解析失败字段继续使用当前值。`);
+      const manualNote = protectedManualCount > 0 ? `；${protectedManualCount}个手动Tokens单价已保留` : "";
+      setRefreshNote(`已采集 ${fetched}/${payload.collection.length} 个外部价格源；解析失败字段继续使用当前值${manualNote}。`);
     } catch (error) {
       const message = error instanceof Error ? error.message : "未知错误";
       setRefreshNote(`价格采集失败：${message}`);
@@ -924,11 +984,15 @@ export default function App() {
               <Database size={18} />
               <h2>模型部署与售卖价格</h2>
             </div>
+            <p className="sourceHint">
+              输入价和输出价单位均为元/百万tokens。修改任一Tokens单价会自动切换为手动价；同步市场价格只更新“市场价”模式的模型，不覆盖手动价。
+            </p>
             <div className="tableWrap">
               <table>
                 <thead>
                   <tr>
                     <th>模型</th>
+                    <th>价格模式</th>
                     <th>卡数</th>
                     <th>参数/活跃</th>
                     <th>量化</th>
@@ -949,6 +1013,20 @@ export default function App() {
                         <td>
                           <strong>{model.name}</strong>
                           <small>{model.priceSource}</small>
+                        </td>
+                        <td>
+                          <select
+                            className="priceModeSelect"
+                            value={model.priceMode ?? "market"}
+                            onChange={(event) => updateModelPriceMode(model.id, event.target.value as ModelPriceMode)}
+                          >
+                            <option value="market">市场价</option>
+                            <option value="manual">手动价</option>
+                          </select>
+                          <button type="button" className="miniButton" onClick={() => applyMarketPrice(model.id)}>
+                            同步此模型
+                          </button>
+                          <small>{(model.priceMode ?? "market") === "manual" ? "手动价保留" : "随市场同步"}</small>
                         </td>
                         <td>
                           <input
@@ -978,7 +1056,7 @@ export default function App() {
                             value={model.inputPricePerMTok}
                             min={0}
                             step={0.1}
-                            onChange={(event) => updateModel(model.id, { inputPricePerMTok: Number(event.target.value) })}
+                            onChange={(event) => updateModelTokenPrice(model.id, { inputPricePerMTok: Number(event.target.value) })}
                           />
                         </td>
                         <td>
@@ -987,7 +1065,7 @@ export default function App() {
                             value={model.outputPricePerMTok}
                             min={0}
                             step={0.1}
-                            onChange={(event) => updateModel(model.id, { outputPricePerMTok: Number(event.target.value) })}
+                            onChange={(event) => updateModelTokenPrice(model.id, { outputPricePerMTok: Number(event.target.value) })}
                           />
                         </td>
                         <td>

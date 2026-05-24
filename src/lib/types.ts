@@ -5,6 +5,8 @@ export type SourceLink = {
   asOf: string;
 };
 
+export type ModelPriceMode = "market" | "manual";
+
 export type AcceleratorSpec = {
   id: string;
   name: string;
@@ -30,6 +32,7 @@ export type ModelProfile = {
   inputPricePerMTok: number;
   outputPricePerMTok: number;
   runtimeEfficiency: number;
+  priceMode: ModelPriceMode;
   priceSource: string;
 };
 

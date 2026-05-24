@@ -29,6 +29,7 @@ export const marketDefaults: MarketDefaults = {
       inputPricePerMTok: 3.2,
       outputPricePerMTok: 16,
       runtimeEfficiency: 0.92,
+      priceMode: "market",
       priceSource: "火山引擎/扣子模型费用：0-32k 输入3.2、输出16元/百万tokens"
     },
     {
@@ -44,6 +45,7 @@ export const marketDefaults: MarketDefaults = {
       inputPricePerMTok: 4,
       outputPricePerMTok: 16,
       runtimeEfficiency: 0.82,
+      priceMode: "market",
       priceSource: "火山引擎/扣子模型费用：输入4、输出16元/百万tokens"
     },
     {
@@ -59,6 +61,7 @@ export const marketDefaults: MarketDefaults = {
       inputPricePerMTok: 3,
       outputPricePerMTok: 14,
       runtimeEfficiency: 0.88,
+      priceMode: "market",
       priceSource: "火山引擎/扣子模型费用：0-32k长输出输入3、输出14元/百万tokens"
     },
     {
@@ -74,6 +77,7 @@ export const marketDefaults: MarketDefaults = {
       inputPricePerMTok: 2.5,
       outputPricePerMTok: 10,
       runtimeEfficiency: 0.76,
+      priceMode: "market",
       priceSource: "阿里云百炼官方：qwen3-max 0-32k 输入2.5、输出10元/百万tokens"
     },
     {
@@ -89,6 +93,7 @@ export const marketDefaults: MarketDefaults = {
       inputPricePerMTok: 6.5,
       outputPricePerMTok: 27,
       runtimeEfficiency: 0.8,
+      priceMode: "market",
       priceSource: "阿里云百炼/Moonshot官方价参考：kimi-k2.6 输入6.5、输出27元/百万tokens"
     }
   ],

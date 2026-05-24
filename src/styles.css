@@ -201,7 +201,8 @@ a {
 }
 
 .field input,
-td input {
+td input,
+td select {
   width: 100%;
   min-height: 36px;
   border: 1px solid rgba(137, 211, 188, 0.22);
@@ -213,7 +214,8 @@ td input {
 }
 
 .field input:focus,
-td input:focus {
+td input:focus,
+td select:focus {
   border-color: rgba(53, 208, 166, 0.86);
   box-shadow: 0 0 0 3px rgba(53, 208, 166, 0.14);
 }
@@ -399,7 +401,7 @@ td input:focus {
 table {
   width: 100%;
   border-collapse: collapse;
-  min-width: 980px;
+  min-width: 1120px;
 }
 
 .financialTable {
@@ -438,6 +440,29 @@ td small {
 
 td input {
   width: 94px;
+}
+
+td select {
+  width: 110px;
+}
+
+.priceModeSelect {
+  margin-bottom: 8px;
+}
+
+.miniButton {
+  width: 110px;
+  min-height: 30px;
+  border: 1px solid rgba(53, 208, 166, 0.32);
+  border-radius: 8px;
+  background: rgba(53, 208, 166, 0.1);
+  color: #c7f6e4;
+  font-size: 12px;
+}
+
+.miniButton:hover {
+  border-color: rgba(53, 208, 166, 0.62);
+  background: rgba(53, 208, 166, 0.18);
 }
 
 .positive {
@@ -791,16 +816,29 @@ td strong,
 }
 
 .field input,
-td input {
+td input,
+td select {
   color: #172033;
   border-color: #cbd5e1;
   background: #ffffff;
 }
 
 .field input:focus,
-td input:focus {
+td input:focus,
+td select:focus {
   border-color: #059669;
   box-shadow: 0 0 0 3px rgba(5, 150, 105, 0.14);
+}
+
+.miniButton {
+  color: #047857;
+  border-color: #b7e3d4;
+  background: #ecfdf5;
+}
+
+.miniButton:hover {
+  border-color: #059669;
+  background: #d1fae5;
 }
 
 .rangeField input {
