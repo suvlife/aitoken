@@ -1,7 +1,7 @@
 import type { MarketDefaults } from "./types.js";
 
 export const marketDefaults: MarketDefaults = {
-  reviewedAt: "2026-04-30",
+  reviewedAt: "2026-05-26",
   accelerators: [
     {
       id: "mlu590",
@@ -17,8 +17,8 @@ export const marketDefaults: MarketDefaults = {
   ],
   models: [
     {
-      id: "doubao-seed-code",
-      name: "Doubao-Seed-2.0-Code",
+      id: "doubao-seed-pro",
+      name: "Doubao-Seed-2.0-Pro",
       vendor: "火山/豆包",
       totalParamsB: 120,
       activeParamsB: 60,
@@ -30,7 +30,7 @@ export const marketDefaults: MarketDefaults = {
       outputPricePerMTok: 16,
       runtimeEfficiency: 0.92,
       priceMode: "market",
-      priceSource: "火山引擎/扣子模型费用：0-32k 输入3.2、输出16元/百万tokens"
+      priceSource: "火山引擎/扣子模型费用：doubao-seed-2.0-pro 0-32k 输入3.2、输出16元/百万tokens"
     },
     {
       id: "deepseek-r1",
@@ -99,7 +99,7 @@ export const marketDefaults: MarketDefaults = {
   ],
   infra: {
     cardsPerServer: 8,
-    serverBasePriceRmb: 320000,
+    serverBasePriceRmb: 380000,
     serverBasePowerWatts: 1200,
     serversPerRack: 6,
     rackPowerKw: 40,
@@ -117,7 +117,7 @@ export const marketDefaults: MarketDefaults = {
     storageTbPerCard: 1,
     minSharedStorageTb: 6000,
     storageRedundancyFactor: 1.35,
-    storagePriceRmbPerTb: 6500,
+    storagePriceRmbPerTb: 7800,
     storagePowerWattsPerTb: 6,
     nicPortsPerServer: 2,
     leafSwitchModel: "H3C S9827-128DH",
@@ -156,8 +156,8 @@ export const marketDefaults: MarketDefaults = {
   },
   financial: {
     depreciationYears: 5,
-    tokenPriceRealizationRate: 0.75,
-    revenueDeductionRate: 0.06,
+    tokenPriceRealizationRate: 0.72,
+    revenueDeductionRate: 0.08,
     tokenDemandGrowthRate: 0.12,
     tokenPriceErosionRate: 0.1,
     rentalPriceErosionRate: 0.06,

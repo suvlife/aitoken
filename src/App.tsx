@@ -17,39 +17,9 @@ import {
   Zap
 } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
-import {
-  Area,
-  AreaChart,
-  Bar,
-  BarChart,
-  CartesianGrid,
-  Cell,
-  Legend,
-  Line,
-  LineChart,
-  Pie,
-  PieChart,
-  ResponsiveContainer,
-  Tooltip,
-  ComposedChart,
-  ReferenceLine,
-  XAxis,
-  YAxis
-} from "recharts";
 import { calculateScenario, clampNumber, formatMoney, formatTokens } from "./lib/calculator";
 import { marketDefaults } from "./lib/marketData";
 import type { MarketDefaults, ModelPriceMode, ModelProfile, Scenario } from "./lib/types";
-
-const COLORS = ["#059669", "#d97706", "#dc2626", "#2563eb", "#65a30d", "#7c3aed", "#0891b2"];
-const CHART_GRID = "#e2e8f0";
-const CHART_AXIS = "#64748b";
-const TOOLTIP_STYLE = {
-  background: "#ffffff",
-  border: "1px solid #d7dee8",
-  borderRadius: 8,
-  boxShadow: "0 16px 42px rgba(15, 23, 42, 0.12)",
-  color: "#1f2937"
-};
 
 const createScenario = (defaults: MarketDefaults): Scenario => ({
   years: 5,
@@ -61,9 +31,9 @@ const createScenario = (defaults: MarketDefaults): Scenario => ({
   financial: { ...defaults.financial }
 });
 
-const toYi = (value: number) => Number((value / 100000000).toFixed(2));
 const toPercent = (value: number) => `${(value * 100).toFixed(1)}%`;
 const formatPb = (tb: number) => `${(tb / 1000).toLocaleString(undefined, { maximumFractionDigits: 2 })} PB`;
+const compactMoney = (value: number) => value.toLocaleString(undefined, { maximumFractionDigits: 0 });
 const manualPriceSource = (inputPricePerMTok: number, outputPricePerMTok: number) =>
   `用户手动设置：输入${inputPricePerMTok}元/百万tokens，输出${outputPricePerMTok}元/百万tokens；同步市场价格不会覆盖。`;
 
@@ -139,19 +109,19 @@ function RangeField({
 }
 
 function Metric({
-  icon,
+  code,
   label,
   value,
   sub
 }: {
-  icon: React.ReactNode;
+  code: string;
   label: string;
   value: string;
   sub: string;
 }) {
   return (
     <div className="metric">
-      <div className="metricIcon">{icon}</div>
+      <div className="metricIcon">{code}</div>
       <span>{label}</span>
       <strong>{value}</strong>
       <small>{sub}</small>
@@ -171,9 +141,12 @@ export default function App() {
   const result = useMemo(() => calculateScenario(scenario), [scenario]);
   const allocatedCards = scenario.models.reduce((sum, model) => sum + Math.max(0, model.allocatedCards), 0);
   const unallocatedCards = scenario.gpuCount - allocatedCards;
+  const effectiveAllocatedCards = result.models.reduce((sum, model) => sum + Math.max(0, model.allocatedCards), 0);
+  const allocationScale = allocatedCards > scenario.gpuCount ? scenario.gpuCount / allocatedCards : 1;
   const tokenPriceRealizationRate =
     scenario.financial.tokenPriceRealizationRate ?? defaults.financial.tokenPriceRealizationRate;
   const revenueDeductionRate = scenario.financial.revenueDeductionRate ?? defaults.financial.revenueDeductionRate;
+  const netRevenueFactor = tokenPriceRealizationRate * Math.max(0, 1 - revenueDeductionRate);
 
   useEffect(() => {
     const updateControlPanelHeight = () => {
@@ -378,14 +351,97 @@ export default function App() {
     pdf.save(`AI-Tokens工厂测算报告-${scenario.gpuCount}卡.pdf`);
   };
 
-  const costPie = [
-    { name: "GPU卡", value: result.costs.gpuCapex },
-    { name: "服务器", value: result.costs.serverCapex },
-    { name: "网络", value: result.costs.networkCapex },
-    { name: "存储", value: result.costs.storageCapex },
-    { name: "机柜配套", value: result.costs.rackCapex },
-    { name: "实施与预备", value: result.costs.deploymentCapex + result.costs.contingencyCapex }
+  const capexSummaryRows = [
+    { item: "GPU卡", basis: `${scenario.gpuCount.toLocaleString()}张 × ${formatMoney(scenario.accelerator.unitPriceRmb)}/张`, amount: result.costs.gpuCapex },
+    { item: "AI服务器", basis: `${result.sizing.serverCount.toLocaleString()}台 × ${formatMoney(scenario.infra.serverBasePriceRmb)}/台，不含GPU`, amount: result.costs.serverCapex },
+    { item: "H3C网络与光互联", basis: `Leaf ${result.sizing.leafSwitches}台、Spine ${result.sizing.spineSwitches}台、光模块${result.sizing.opticalEndpoints.toLocaleString()}个`, amount: result.costs.networkCapex },
+    { item: "高性能共享存储", basis: `${formatPb(result.sizing.usableStorageTb)}可用 × ${scenario.infra.storageRedundancyFactor.toFixed(2)}冗余 = ${formatPb(result.sizing.rawStorageTb)}采购`, amount: result.costs.storageCapex },
+    { item: "机柜/PDU/柜内辅材", basis: `${result.sizing.rackCount.toLocaleString()}柜 × (机柜基础+PDU+柜内线缆)`, amount: result.costs.rackCapex },
+    { item: "部署实施", basis: `硬件小计 × ${(scenario.infra.deploymentRateOfCapex * 100).toFixed(1)}%`, amount: result.costs.deploymentCapex },
+    { item: "预备费", basis: `(硬件小计+部署实施) × ${(scenario.infra.contingencyRate * 100).toFixed(1)}%`, amount: result.costs.contingencyCapex },
+    { item: "合计", basis: `总CAPEX，按${scenario.financial.depreciationYears}年折旧`, amount: result.costs.totalCapex }
   ];
+
+  const hardwareCapexRows = [
+    {
+      item: `${scenario.accelerator.name} AI计算卡`,
+      quantity: `${scenario.gpuCount.toLocaleString()}张`,
+      unit: formatMoney(scenario.accelerator.unitPriceRmb),
+      formula: "GPU卡数 × 单卡采购价",
+      amount: result.costs.gpuCapex
+    },
+    {
+      item: "8卡AI服务器非GPU部分",
+      quantity: `${result.sizing.serverCount.toLocaleString()}台`,
+      unit: formatMoney(scenario.infra.serverBasePriceRmb),
+      formula: `ceil(${scenario.gpuCount.toLocaleString()} / ${scenario.infra.cardsPerServer}) × 服务器非GPU单价`,
+      amount: result.costs.serverCapex
+    },
+    {
+      item: `${scenario.infra.leafSwitchModel} Leaf交换机`,
+      quantity: `${result.sizing.leafSwitches.toLocaleString()}台`,
+      unit: formatMoney(scenario.infra.leafSwitchPriceRmb),
+      formula: "ceil(服务器台数 / 单台Leaf可承载服务器数)",
+      amount: result.sizing.leafSwitches * scenario.infra.leafSwitchPriceRmb
+    },
+    {
+      item: `${scenario.infra.spineSwitchModel} Spine交换机`,
+      quantity: `${result.sizing.spineSwitches.toLocaleString()}台`,
+      unit: formatMoney(scenario.infra.spineSwitchPriceRmb),
+      formula: "ceil(Leaf上联总端口 / Spine端口数)",
+      amount: result.sizing.spineSwitches * scenario.infra.spineSwitchPriceRmb
+    },
+    {
+      item: `${scenario.infra.managementSwitchModel} 管理交换机`,
+      quantity: `${result.sizing.managementSwitches.toLocaleString()}台`,
+      unit: formatMoney(scenario.infra.managementSwitchPriceRmb),
+      formula: "ceil(服务器台数 / 48)",
+      amount: result.sizing.managementSwitches * scenario.infra.managementSwitchPriceRmb
+    },
+    {
+      item: `${scenario.infra.opticalModuleModel} 光模块`,
+      quantity: `${result.sizing.opticalEndpoints.toLocaleString()}个`,
+      unit: formatMoney(scenario.infra.opticalEndpointPriceRmb),
+      formula: "(服务器-Leaf链路 + Leaf-Spine链路) × 2端",
+      amount: result.sizing.opticalEndpoints * scenario.infra.opticalEndpointPriceRmb
+    },
+    {
+      item: `${scenario.infra.fiberCableModel} 光纤/跳线/标签辅材`,
+      quantity: `${result.sizing.fiberCableLinks.toLocaleString()}条链路`,
+      unit: formatMoney(scenario.infra.fiberCablingPriceRmbPerLink),
+      formula: "服务器-Leaf链路 + Leaf-Spine链路",
+      amount: result.costs.fiberCablingCapex
+    },
+    {
+      item: "高性能共享存储",
+      quantity: `${formatPb(result.sizing.rawStorageTb)}原始容量`,
+      unit: `${formatMoney(scenario.infra.storagePriceRmbPerTb)}/TB`,
+      formula: "max(最低容量, GPU卡数×TB/卡) × 冗余系数 × 元/TB",
+      amount: result.costs.storageCapex
+    },
+    {
+      item: "机柜基础建设",
+      quantity: `${result.sizing.rackCount.toLocaleString()}柜`,
+      unit: formatMoney(scenario.infra.rackSetupPriceRmb),
+      formula: "机柜数 × 单柜基础建设费",
+      amount: result.costs.rackBaseCapex
+    },
+    {
+      item: "PDU/A-B路配电",
+      quantity: `${result.sizing.rackCount.toLocaleString()}柜`,
+      unit: formatMoney(scenario.infra.pduPriceRmbPerRack),
+      formula: "机柜数 × 单柜PDU与安装分摊",
+      amount: result.costs.pduCapex
+    },
+    {
+      item: "柜内线缆与理线辅材",
+      quantity: `${result.sizing.rackCount.toLocaleString()}柜`,
+      unit: formatMoney(scenario.infra.rackCablingPriceRmbPerRack),
+      formula: "机柜数 × 单柜线缆辅材",
+      amount: result.costs.rackCablingCapex
+    }
+  ];
+
   const opexItems = [
     { name: "电费", value: result.costs.annualElectricityCost, note: `${result.sizing.facilityPowerKw.toFixed(0)}kW × 8760 × ${scenario.infra.electricityPriceRmbPerKwh.toFixed(2)}元/kWh` },
     { name: "冷却/补水", value: result.costs.annualWaterCost, note: `按电费的 ${(scenario.infra.waterCostRateOfElectricity * 100).toFixed(1)}%` },
@@ -395,42 +451,117 @@ export default function App() {
     { name: "公网/安全/专线", value: result.costs.annualInternetSecurityCost, note: `${formatMoney(scenario.infra.internetAndSecurityMonthlyRmb)}/月 × 12` }
   ];
 
-  const yearlyChart = result.yearly.map((item) => ({
-    year: `Y${item.year}`,
-    tokenListRevenue: toYi(item.tokenListRevenue),
-    tokenRevenue: toYi(item.tokenRevenue),
-    tokenDeduction: toYi(item.tokenRevenueDeduction),
-    rentalGrossRevenue: toYi(item.rentalGrossRevenue),
-    rentalRevenue: toYi(item.rentalRevenue),
-    rentalDeduction: toYi(item.rentalRevenueDeduction),
-    opex: toYi(item.opex),
-    depreciation: toYi(item.depreciation),
-    accountingCost: toYi(item.opex + item.depreciation),
-    tokenProfit: toYi(item.tokenAccountingProfit),
-    rentalProfit: toYi(item.rentalAccountingProfit),
-    tokenCashFlow: toYi(item.tokenCashFlow),
-    rentalCashFlow: toYi(item.rentalCashFlow),
-    tokenCumulativeCashFlow: toYi(item.tokenCumulativeCashFlow),
-    rentalCumulativeCashFlow: toYi(item.rentalCumulativeCashFlow),
-    tokenRoi: Number((item.tokenRoi * 100).toFixed(1)),
-    rentalRoi: Number((item.rentalRoi * 100).toFixed(1)),
-    tokenAccountingRoi: Number((item.tokenAccountingRoi * 100).toFixed(1)),
-    rentalAccountingRoi: Number((item.rentalAccountingRoi * 100).toFixed(1))
-  }));
+  const opexCalcRows = [
+    {
+      item: "电费",
+      driver: `${result.sizing.facilityPowerKw.toFixed(0)}kW设施功率，年用电${result.sizing.annualEnergyKwh.toLocaleString(undefined, { maximumFractionDigits: 0 })}kWh`,
+      formula: `设施功率 × 8760 × ${scenario.infra.electricityPriceRmbPerKwh.toFixed(2)}元/kWh`,
+      amount: result.costs.annualElectricityCost
+    },
+    {
+      item: "冷却/补水/水处理",
+      driver: `按电费的 ${(scenario.infra.waterCostRateOfElectricity * 100).toFixed(1)}%`,
+      formula: "年电费 × 冷却补水系数",
+      amount: result.costs.annualWaterCost
+    },
+    {
+      item: "机柜租赁",
+      driver: `${result.sizing.rackCount.toLocaleString()}柜，${formatMoney(scenario.infra.rackMonthlyRentRmb)}/柜/月`,
+      formula: "机柜数 × 单柜月租 × 12",
+      amount: result.costs.annualRackRent
+    },
+    {
+      item: "运维人力/备件",
+      driver: `总CAPEX的 ${(scenario.infra.omRateOfCapex * 100).toFixed(1)}%/年`,
+      formula: "总CAPEX × 运维备件费率",
+      amount: result.costs.annualOmCost
+    },
+    {
+      item: "平台软件/监控",
+      driver: `总CAPEX的 ${(scenario.infra.softwareRateOfCapex * 100).toFixed(1)}%/年`,
+      formula: "总CAPEX × 软件监控费率",
+      amount: result.costs.annualSoftwareCost
+    },
+    {
+      item: "公网/安全/专线",
+      driver: `${formatMoney(scenario.infra.internetAndSecurityMonthlyRmb)}/月`,
+      formula: "月费 × 12",
+      amount: result.costs.annualInternetSecurityCost
+    },
+    {
+      item: "年度OPEX合计",
+      driver: "首年口径，后续年度按OPEX通胀率滚动",
+      formula: `Σ以上项目；Y2起 × (1 + ${(scenario.financial.opexInflationRate * 100).toFixed(1)}%)^(n-1)`,
+      amount: result.costs.annualOpex
+    }
+  ];
 
-  const modelChart = result.models.map((model) => ({
-    name: model.name.replace("DeepSeek-", "DS-").replace("Doubao-", "豆包-"),
-    revenue: toYi(model.annualRevenue),
-    tps: Number(model.practicalTpsPerCard.toFixed(1)),
-    cards: model.allocatedCards
-  }));
+  const sensitivityRows = useMemo(() => {
+    const variants = [
+      {
+        name: "当前方案",
+        scenario
+      },
+      {
+        name: "电价+20%",
+        scenario: {
+          ...scenario,
+          infra: {
+            ...scenario.infra,
+            electricityPriceRmbPerKwh: scenario.infra.electricityPriceRmbPerKwh * 1.2
+          }
+        }
+      },
+      {
+        name: "成交系数-10%",
+        scenario: {
+          ...scenario,
+          financial: {
+            ...scenario.financial,
+            tokenPriceRealizationRate: Math.max(0, tokenPriceRealizationRate - 0.1)
+          }
+        }
+      },
+      {
+        name: "价格年降+10%",
+        scenario: {
+          ...scenario,
+          financial: {
+            ...scenario.financial,
+            tokenPriceErosionRate: Math.min(1, scenario.financial.tokenPriceErosionRate + 0.1)
+          }
+        }
+      },
+      {
+        name: "租卡价+30%",
+        scenario: {
+          ...scenario,
+          financial: {
+            ...scenario.financial,
+            rentalPricePerCardHourRmb: scenario.financial.rentalPricePerCardHourRmb * 1.3
+          }
+        }
+      }
+    ];
 
-  const paybackText = (value: number | null) => (value ? `${value.toFixed(1)}年` : "5年内未回本");
+    return variants.map((variant) => {
+      const variantResult = calculateScenario(variant.scenario);
+      const finalYear = variantResult.yearly[variantResult.yearly.length - 1];
+      return {
+        name: variant.name,
+        tokenRoi: Number((finalYear.tokenRoi * 100).toFixed(1)),
+        rentalRoi: Number((finalYear.rentalRoi * 100).toFixed(1)),
+        annualOpex: variantResult.costs.annualOpex,
+        tokenPayback: variantResult.tokenPaybackYear ? Number(variantResult.tokenPaybackYear.toFixed(1)) : scenario.years + 1
+      };
+    });
+  }, [scenario, tokenPriceRealizationRate]);
+
+  const paybackText = (value: number | null) => (value ? `${value.toFixed(1)}年` : `${scenario.years}年内未回本`);
   const firstYear = result.yearly[0];
   const lastYear = result.yearly[result.yearly.length - 1];
   const horizonTokenRevenue = result.yearly.reduce((sum, row) => sum + row.tokenRevenue, 0);
   const horizonRentalRevenue = result.yearly.reduce((sum, row) => sum + row.rentalRevenue, 0);
-  const netRevenueFactor = tokenPriceRealizationRate * Math.max(0, 1 - revenueDeductionRate);
   const throughputRealization =
     result.totalAnnualEngineeringOutputTokens > 0
       ? result.totalAnnualOutputTokens / result.totalAnnualEngineeringOutputTokens
@@ -438,6 +569,79 @@ export default function App() {
   const averageInputOutputRatio =
     result.totalAnnualOutputTokens > 0 ? result.totalAnnualInputTokens / result.totalAnnualOutputTokens : 0;
   const generatedAt = new Date().toLocaleString("zh-CN", { hour12: false });
+  const capexPerCard = result.costs.totalCapex / scenario.gpuCount;
+  const facilityKwPerRack = result.sizing.facilityPowerKw / result.sizing.rackCount;
+  const firstYearTokenMargin = firstYear.tokenRevenue > 0 ? (firstYear.tokenRevenue - firstYear.opex) / firstYear.tokenRevenue : 0;
+  const logicChecks = [
+    {
+      label: "产能折损",
+      value: `${(throughputRealization * 100).toFixed(1)}%`,
+      status: throughputRealization <= 0.65 ? "稳健" : "偏乐观",
+      note: "实际售卖产能/工程上限，越高越依赖调度、客户需求和稳定性。"
+    },
+    {
+      label: "净价折扣",
+      value: `${(netRevenueFactor * 100).toFixed(1)}%`,
+      status: netRevenueFactor <= 0.75 ? "稳健" : "复核",
+      note: "官方价成交系数与扣减后留存相乘后的实际成交口径。"
+    },
+    {
+      label: "电力密度",
+      value: `${facilityKwPerRack.toFixed(1)}kW/柜`,
+      status: facilityKwPerRack <= scenario.infra.rackPowerKw * scenario.infra.pue ? "匹配" : "复核",
+      note: "设施功率按PUE后分摊到机柜，需与机房合同功率口径对齐。"
+    },
+    {
+      label: "首年现金毛利",
+      value: `${(firstYearTokenMargin * 100).toFixed(1)}%`,
+      status: firstYearTokenMargin > 0.35 ? "可观" : "承压",
+      note: "Tokens净收入扣OPEX后的现金经营余量，未扣税费和融资成本。"
+    },
+    {
+      label: "单卡全投资",
+      value: `${compactMoney(capexPerCard)}元/卡`,
+      status: "核价",
+      note: "总CAPEX/卡数，包含GPU、整机、网络、存储、机柜、实施和预备费。"
+    }
+  ];
+  const defaultAuditRows = [
+    {
+      item: "MLU590单卡采购价",
+      value: formatMoney(scenario.accelerator.unitPriceRmb),
+      verdict: "合理",
+      note: "默认按公开6-7万元区间取中位数，大批量采购仍需按合同修正。"
+    },
+    {
+      item: "服务器非GPU价格",
+      value: formatMoney(scenario.infra.serverBasePriceRmb),
+      verdict: "已上调",
+      note: "2TB DDR5、NVMe、400G网卡受2026内存/NAND涨价影响，默认从32万元上调到38万元。"
+    },
+    {
+      item: "高性能存储单价",
+      value: `${formatMoney(scenario.infra.storagePriceRmbPerTb)}/TB`,
+      verdict: "已上调",
+      note: "企业级SSD和AI存储供应偏紧，默认从6500元/TB上调到7800元/TB。"
+    },
+    {
+      item: "PUE与电价",
+      value: `${scenario.infra.pue.toFixed(2)} / ${scenario.infra.electricityPriceRmbPerKwh.toFixed(2)}元`,
+      verdict: "合理",
+      note: "PUE 1.35按新建高密智算机房偏稳健口径；电价0.72元/kWh适合做全国平均敏感性基准。"
+    },
+    {
+      item: "Tokens成交口径",
+      value: `${(netRevenueFactor * 100).toFixed(1)}%`,
+      verdict: "偏稳健",
+      note: "成交系数0.72、扣减8%，用于覆盖大客户折扣、渠道、坏账、免费额度和服务补偿。"
+    },
+    {
+      item: "推理产能折损",
+      value: `${(throughputRealization * 100).toFixed(1)}%`,
+      verdict: "合理",
+      note: "实际可售产能约等于工程上限的一半，已扣利用率、可售卖率和可用性。"
+    }
+  ];
   const capexRows = [
     { item: "GPU卡", basis: `${scenario.gpuCount.toLocaleString()}张 × ${formatMoney(scenario.accelerator.unitPriceRmb)}/张`, amount: result.costs.gpuCapex },
     { item: "服务器", basis: `${result.sizing.serverCount.toLocaleString()}台 × ${formatMoney(scenario.infra.serverBasePriceRmb)}/台非GPU成本`, amount: result.costs.serverCapex },
@@ -448,7 +652,7 @@ export default function App() {
   ];
   const engineeringRows = [
     { item: "服务器台数", value: `${result.sizing.serverCount.toLocaleString()}台`, note: `${scenario.infra.cardsPerServer}张卡/台` },
-    { item: "单台服务器", value: `${scenario.infra.cardsPerServer}x ${scenario.accelerator.name}`, note: "双CPU、2TB DDR5、8x NVMe、2x400G NIC" },
+    { item: "单台服务器", value: `${scenario.infra.cardsPerServer}x ${scenario.accelerator.name}`, note: `双CPU、2TB DDR5、8x NVMe、${scenario.infra.nicPortsPerServer}x400G NIC` },
     { item: "网络型号", value: `${scenario.infra.leafSwitchModel} / ${scenario.infra.spineSwitchModel}`, note: `${scenario.infra.leafSwitchPortSpec}；${scenario.infra.spineSwitchPortSpec}` },
     { item: "光模块", value: `${result.sizing.opticalEndpoints.toLocaleString()}个`, note: `${scenario.infra.opticalModuleModel}，服务器-Leaf与Leaf-Spine两端合计` },
     { item: "光纤链路", value: `${result.sizing.fiberCableLinks.toLocaleString()}条`, note: `服务器-Leaf ${result.sizing.serverLeafCableLinks.toLocaleString()}条，Leaf-Spine ${result.sizing.leafSpineLinks.toLocaleString()}条` },
@@ -463,6 +667,13 @@ export default function App() {
         <div>
           <p>国产AI计算卡 · 智算集群 · Tokens工厂</p>
           <h1>投资收益测算工作台</h1>
+          <div className="heroMeta">
+            <span>{scenario.gpuCount.toLocaleString()}张卡</span>
+            <span>{result.sizing.serverCount.toLocaleString()}台服务器</span>
+            <span>{formatPb(result.sizing.usableStorageTb)}可用存储</span>
+            <span>设施功率 {result.sizing.facilityPowerKw.toFixed(0)}kW</span>
+            {allocationScale < 1 ? <span>超配按 {(allocationScale * 100).toFixed(1)}% 缩放计算</span> : null}
+          </div>
         </div>
         <div className="topActions" data-export-hide="true">
           <button className="ghostButton" onClick={refreshMarket} disabled={isRefreshing}>
@@ -799,20 +1010,64 @@ export default function App() {
 
         <section className="dashboard">
           <section className="statusStrip">
-            <Metric icon={<Calculator size={20} />} label="总CAPEX" value={formatMoney(result.costs.totalCapex)} sub={`折旧 ${formatMoney(result.costs.annualDepreciation)}/年`} />
-            <Metric icon={<CircleDollarSign size={20} />} label="年OPEX" value={formatMoney(result.costs.annualOpex)} sub={`水电 ${formatMoney(result.costs.annualElectricityCost + result.costs.annualWaterCost)}；电价 ${scenario.infra.electricityPriceRmbPerKwh.toFixed(2)}元/kWh`} />
-            <Metric icon={<Zap size={20} />} label="年输出Tokens" value={`${formatTokens(result.totalAnnualOutputTokens)}`} sub={`工程上限 ${formatTokens(result.totalAnnualEngineeringOutputTokens)}；输入 ${formatTokens(result.totalAnnualInputTokens)}`} />
-            <Metric icon={<TrendingUp size={20} />} label={`${scenario.years}年Tokens净收入`} value={formatMoney(horizonTokenRevenue)} sub={`首年 ${formatMoney(firstYear.tokenRevenue)}，末年 ${formatMoney(lastYear.tokenRevenue)}；回本 ${paybackText(result.tokenPaybackYear)}`} />
-            <Metric icon={<Cpu size={20} />} label={`${scenario.years}年租卡净收入`} value={formatMoney(horizonRentalRevenue)} sub={`首年 ${formatMoney(firstYear.rentalRevenue)}，末年 ${formatMoney(lastYear.rentalRevenue)}；回本 ${paybackText(result.rentalPaybackYear)}`} />
+            <Metric code="CAP" label="总CAPEX" value={formatMoney(result.costs.totalCapex)} sub={`折旧 ${formatMoney(result.costs.annualDepreciation)}/年`} />
+            <Metric code="OPX" label="年OPEX" value={formatMoney(result.costs.annualOpex)} sub={`水电 ${formatMoney(result.costs.annualElectricityCost + result.costs.annualWaterCost)}；电价 ${scenario.infra.electricityPriceRmbPerKwh.toFixed(2)}元/kWh`} />
+            <Metric code="TOK" label="年输出Tokens" value={`${formatTokens(result.totalAnnualOutputTokens)}`} sub={`工程上限 ${formatTokens(result.totalAnnualEngineeringOutputTokens)}；输入 ${formatTokens(result.totalAnnualInputTokens)}`} />
+            <Metric code="REV" label={`${scenario.years}年Tokens净收入`} value={formatMoney(horizonTokenRevenue)} sub={`首年 ${formatMoney(firstYear.tokenRevenue)}，末年 ${formatMoney(lastYear.tokenRevenue)}；回本 ${paybackText(result.tokenPaybackYear)}`} />
+            <Metric code="REN" label={`${scenario.years}年租卡净收入`} value={formatMoney(horizonRentalRevenue)} sub={`首年 ${formatMoney(firstYear.rentalRevenue)}，末年 ${formatMoney(lastYear.rentalRevenue)}；回本 ${paybackText(result.rentalPaybackYear)}`} />
           </section>
 
           <section className="notice">
             <AlertTriangle size={18} />
             <span>{refreshNote}</span>
             <b>
-              模型分配 {allocatedCards.toLocaleString()} 张；
+              模型分配 {allocatedCards.toLocaleString()} 张，实际计算 {effectiveAllocatedCards.toLocaleString()} 张；
               {unallocatedCards >= 0 ? `空余 ${unallocatedCards.toLocaleString()} 张` : `超配 ${Math.abs(unallocatedCards).toLocaleString()} 张`}
             </b>
+          </section>
+
+          <section className="logicPanel">
+            <div className="logicHeader">
+              <div>
+                <p>Logic Review</p>
+                <h2>计算口径审计</h2>
+              </div>
+              <span>未计入税费、融资成本、销售费用和坏账超额损失，适合作为工程投资测算底稿。</span>
+            </div>
+            <div className="logicGrid">
+              {logicChecks.map((item) => (
+                <article key={item.label}>
+                  <div>
+                    <span>{item.label}</span>
+                    <b>{item.status}</b>
+                  </div>
+                  <strong>{item.value}</strong>
+                  <p>{item.note}</p>
+                </article>
+              ))}
+            </div>
+          </section>
+
+          <section className="panel defaultAuditPanel">
+            <div className="panelTitle">
+              <ClipboardList size={18} />
+              <h2>默认值合理性复核</h2>
+            </div>
+            <div className="auditGrid">
+              {defaultAuditRows.map((row) => (
+                <article key={row.item}>
+                  <div>
+                    <span>{row.item}</span>
+                    <b>{row.verdict}</b>
+                  </div>
+                  <strong>{row.value}</strong>
+                  <p>{row.note}</p>
+                </article>
+              ))}
+            </div>
+            <p className="chartNote">
+              默认值适合作为“可研初筛”的保守基线，不代表正式询价结果。GPU、服务器、存储、网络设备、模型价格和租卡价格均保留手动覆盖入口。
+            </p>
           </section>
 
           <section className="insightGrid">
@@ -825,7 +1080,7 @@ export default function App() {
             </article>
             <article>
               <CircleDollarSign size={18} />
-              <strong>租卡当前不回本</strong>
+              <strong>{result.rentalPaybackYear ? `租卡回本 ${result.rentalPaybackYear.toFixed(1)}年` : "租卡当前不回本"}</strong>
               <p>
                 当前租价 {scenario.financial.rentalPricePerCardHourRmb.toFixed(2)} 元/卡时，{scenario.years}年末累计现金流 {formatMoney(lastYear.rentalCumulativeCashFlow)}；按当前OPEX和利用率，回本首年租价需约 {result.rentalBreakEvenPricePerCardHour.toFixed(2)} 元/卡时。
               </p>
@@ -870,115 +1125,219 @@ export default function App() {
             </article>
           </section>
 
-          <section className="chartGrid">
+          <section className="tableGrid">
             <div className="panel wide">
               <div className="panelTitle">
                 <TrendingUp size={18} />
-                <h2>5年收入、OPEX、折旧与利润</h2>
+                <h2>{scenario.years}年收入、OPEX、折旧与利润表</h2>
               </div>
-              <div className="chartBox chartBoxLarge">
-                <ResponsiveContainer width="100%" height="100%">
-                  <ComposedChart data={yearlyChart} margin={{ top: 14, right: 22, left: 0, bottom: 8 }}>
-                    <defs>
-                      <linearGradient id="tokenNetFill" x1="0" y1="0" x2="0" y2="1">
-                        <stop offset="5%" stopColor="#059669" stopOpacity={0.28} />
-                        <stop offset="95%" stopColor="#059669" stopOpacity={0.04} />
-                      </linearGradient>
-                      <linearGradient id="rentalNetFill" x1="0" y1="0" x2="0" y2="1">
-                        <stop offset="5%" stopColor="#d97706" stopOpacity={0.24} />
-                        <stop offset="95%" stopColor="#d97706" stopOpacity={0.03} />
-                      </linearGradient>
-                      <linearGradient id="costFill" x1="0" y1="0" x2="0" y2="1">
-                        <stop offset="5%" stopColor="#dc2626" stopOpacity={0.12} />
-                        <stop offset="95%" stopColor="#dc2626" stopOpacity={0.02} />
-                      </linearGradient>
-                    </defs>
-                    <CartesianGrid stroke={CHART_GRID} strokeDasharray="4 4" />
-                    <XAxis dataKey="year" stroke={CHART_AXIS} />
-                    <YAxis stroke={CHART_AXIS} unit="亿" />
-                    <Tooltip contentStyle={TOOLTIP_STYLE} />
-                    <Legend />
-                    <Area type="monotone" dataKey="tokenRevenue" name="Tokens净收入" stroke="#059669" strokeWidth={3} fill="url(#tokenNetFill)" activeDot={{ r: 6 }} />
-                    <Area type="monotone" dataKey="rentalRevenue" name="租卡净收入" stroke="#d97706" strokeWidth={3} fill="url(#rentalNetFill)" activeDot={{ r: 5 }} />
-                    <Area type="monotone" dataKey="accountingCost" name="OPEX+折旧" stroke="#dc2626" strokeWidth={2.5} fill="url(#costFill)" strokeDasharray="7 4" />
-                    <Line type="monotone" dataKey="tokenProfit" name="Tokens会计利润" stroke="#2563eb" strokeWidth={3} dot={{ r: 4 }} />
-                    <Line type="monotone" dataKey="rentalProfit" name="租卡会计利润" stroke="#ef4444" strokeWidth={2.5} strokeDasharray="5 4" dot={{ r: 3 }} />
-                  </ComposedChart>
-                </ResponsiveContainer>
+              <div className="tableWrap">
+                <table className="financialTable analysisTable">
+                  <thead>
+                    <tr>
+                      <th>年份</th>
+                      <th>Tokens官方价收入</th>
+                      <th>Tokens净收入</th>
+                      <th>租卡净收入</th>
+                      <th>OPEX</th>
+                      <th>折旧</th>
+                      <th>Tokens会计利润</th>
+                      <th>租卡会计利润</th>
+                      <th>Tokens现金ROI</th>
+                      <th>租卡现金ROI</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {result.yearly.map((row) => (
+                      <tr key={row.year}>
+                        <td>Y{row.year}</td>
+                        <td>{formatMoney(row.tokenListRevenue)}</td>
+                        <td>{formatMoney(row.tokenRevenue)}</td>
+                        <td>{formatMoney(row.rentalRevenue)}</td>
+                        <td>{formatMoney(row.opex)}</td>
+                        <td>{formatMoney(row.depreciation)}</td>
+                        <td>{formatMoney(row.tokenAccountingProfit)}</td>
+                        <td>{formatMoney(row.rentalAccountingProfit)}</td>
+                        <td>{(row.tokenRoi * 100).toFixed(1)}%</td>
+                        <td>{(row.rentalRoi * 100).toFixed(1)}%</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
               </div>
               <p className="chartNote">
                 顶部周期净收入 = Σ各年净收入；Y1使用当前价格和需求，Y2起按需求增长与价格年降滚动。单年净收入 = 官方价收入 × 官方价成交系数 {tokenPriceRealizationRate.toFixed(2)} × 扣减后留存 {(1 - revenueDeductionRate).toFixed(2)}，当前约等于官方价的 {(netRevenueFactor * 100).toFixed(1)}%。
               </p>
             </div>
 
-            <div className="panel">
+            <div className="panel wide">
               <div className="panelTitle">
                 <Calculator size={18} />
-                <h2>CAPEX拆分</h2>
+                <h2>硬件CAPEX计算表</h2>
               </div>
-              <div className="chartBox">
-                <ResponsiveContainer width="100%" height="100%">
-                  <PieChart>
-                    <Pie data={costPie} dataKey="value" nameKey="name" innerRadius={58} outerRadius={92} paddingAngle={2}>
-                      {costPie.map((entry, index) => (
-                        <Cell key={entry.name} fill={COLORS[index % COLORS.length]} />
-                      ))}
-                    </Pie>
-                    <Tooltip formatter={(value) => formatMoney(Number(value ?? 0))} contentStyle={TOOLTIP_STYLE} />
-                  </PieChart>
-                </ResponsiveContainer>
+              <div className="tableWrap">
+                <table className="financialTable calcTable">
+                  <thead>
+                    <tr>
+                      <th>硬件/辅材项目</th>
+                      <th>数量</th>
+                      <th>单价</th>
+                      <th>计算公式</th>
+                      <th>金额</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {hardwareCapexRows.map((row) => (
+                      <tr key={row.item}>
+                        <td>{row.item}</td>
+                        <td>{row.quantity}</td>
+                        <td>{row.unit}</td>
+                        <td>{row.formula}</td>
+                        <td>{formatMoney(row.amount)}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
               </div>
-              <div className="miniList">
-                {costPie.map((item, index) => (
-                  <span key={item.name}>
-                    <i style={{ background: COLORS[index % COLORS.length] }} />
-                    {item.name} {formatMoney(item.value)}
-                  </span>
-                ))}
-              </div>
+              <p className="chartNote">
+                网络设备默认采用H3C新华三口径：{scenario.infra.leafSwitchModel} Leaf、{scenario.infra.spineSwitchModel} Spine、{scenario.infra.opticalModuleModel}光模块；光模块按链路两端计算，光纤/跳线/标签/理线辅材按链路计入。
+              </p>
             </div>
 
             <div className="panel">
               <div className="panelTitle">
                 <Network size={18} />
-                <h2>累计现金ROI/回本曲线</h2>
+                <h2>CAPEX汇总表</h2>
               </div>
-              <div className="chartBox">
-                <ResponsiveContainer width="100%" height="100%">
-                  <LineChart data={yearlyChart}>
-                    <CartesianGrid stroke={CHART_GRID} strokeDasharray="4 4" />
-                    <XAxis dataKey="year" stroke={CHART_AXIS} />
-                    <YAxis stroke={CHART_AXIS} unit="%" />
-                    <Tooltip contentStyle={TOOLTIP_STYLE} />
-                    <Legend />
-                    <ReferenceLine y={0} stroke={CHART_AXIS} strokeDasharray="4 4" />
-                    <Line type="monotone" dataKey="tokenRoi" name="Tokens现金ROI" stroke="#059669" strokeWidth={3} dot={{ r: 4 }} />
-                    <Line type="monotone" dataKey="rentalRoi" name="租卡现金ROI" stroke="#d97706" strokeWidth={3} dot={{ r: 4 }} />
-                  </LineChart>
-                </ResponsiveContainer>
+              <div className="tableWrap">
+                <table className="financialTable calcTable">
+                  <thead>
+                    <tr>
+                      <th>项目</th>
+                      <th>测算依据</th>
+                      <th>金额</th>
+                      <th>占总CAPEX</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {capexSummaryRows.map((row) => (
+                      <tr key={row.item} className={row.item === "合计" ? "totalRow" : undefined}>
+                        <td>{row.item}</td>
+                        <td>{row.basis}</td>
+                        <td>{formatMoney(row.amount)}</td>
+                        <td>{row.item === "合计" ? "100.0%" : `${((row.amount / result.costs.totalCapex) * 100).toFixed(1)}%`}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
               </div>
-              <p className="chartNote">现金ROI = (-CAPEX + 累计净经营现金流) / CAPEX；折旧只进入年度会计利润，不再作为现金支出重复扣除。</p>
+              <p className="chartNote">折旧 = 总CAPEX / {scenario.financial.depreciationYears}年；现金ROI = (-CAPEX + 累计净经营现金流) / CAPEX，折旧不重复作为现金支出。</p>
+            </div>
+
+            <div className="panel">
+              <div className="panelTitle">
+                <CircleDollarSign size={18} />
+                <h2>OPEX计算表</h2>
+              </div>
+              <div className="tableWrap">
+                <table className="financialTable calcTable">
+                  <thead>
+                    <tr>
+                      <th>OPEX项目</th>
+                      <th>成本驱动</th>
+                      <th>计算公式</th>
+                      <th>年成本</th>
+                      <th>占OPEX</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {opexCalcRows.map((row) => (
+                      <tr key={row.item} className={row.item.includes("合计") ? "totalRow" : undefined}>
+                        <td>{row.item}</td>
+                        <td>{row.driver}</td>
+                        <td>{row.formula}</td>
+                        <td>{formatMoney(row.amount)}</td>
+                        <td>{row.item.includes("合计") ? "100.0%" : `${((row.amount / result.costs.annualOpex) * 100).toFixed(1)}%`}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+              <p className="chartNote">电费会随电价、PUE、GPU平均负载和存储容量变化；该表用于直接诊断“调电价后为什么成本变化”。</p>
             </div>
 
             <div className="panel wide">
               <div className="panelTitle">
                 <Zap size={18} />
-                <h2>模型吞吐与收入</h2>
+                <h2>模型吞吐、Tokens与收入表</h2>
               </div>
-              <div className="chartBox">
-                <ResponsiveContainer width="100%" height="100%">
-                  <BarChart data={modelChart}>
-                    <CartesianGrid stroke={CHART_GRID} strokeDasharray="4 4" />
-                    <XAxis dataKey="name" stroke={CHART_AXIS} />
-                    <YAxis yAxisId="left" stroke={CHART_AXIS} unit="亿" />
-                    <YAxis yAxisId="right" orientation="right" stroke={CHART_AXIS} unit="t/s" />
-                    <Tooltip contentStyle={TOOLTIP_STYLE} />
-                    <Legend />
-                    <Bar yAxisId="left" dataKey="revenue" name="年收入" fill="#059669" radius={[6, 6, 0, 0]} />
-                    <Line yAxisId="right" type="monotone" dataKey="tps" name="实际TPS/卡" stroke="#d97706" strokeWidth={3} />
-                  </BarChart>
-                </ResponsiveContainer>
+              <div className="tableWrap">
+                <table className="financialTable analysisTable">
+                  <thead>
+                    <tr>
+                      <th>模型</th>
+                      <th>分配卡数</th>
+                      <th>单副本卡数</th>
+                      <th>工程TPS/卡</th>
+                      <th>实际TPS/卡</th>
+                      <th>年输出Tokens</th>
+                      <th>年输入Tokens</th>
+                      <th>官方价收入</th>
+                      <th>年净收入</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {result.models.map((model) => (
+                      <tr key={model.id}>
+                        <td>{model.name}</td>
+                        <td>{model.allocatedCards.toLocaleString()}张</td>
+                        <td>{model.cardsPerReplica.toLocaleString()}张</td>
+                        <td>{model.engineeringTpsPerCard.toFixed(1)}</td>
+                        <td>{model.practicalTpsPerCard.toFixed(1)}</td>
+                        <td>{formatTokens(model.annualOutputTokens)}</td>
+                        <td>{formatTokens(model.annualInputTokens)}</td>
+                        <td>{formatMoney(model.annualRevenue)}</td>
+                        <td>{formatMoney(model.annualRevenue * netRevenueFactor)}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
               </div>
+              <p className="chartNote">实际TPS/卡 = 工程TPS/卡 × 集群利用率 × 可售卖率；年输出Tokens还会乘年度可用性，输入Tokens按各模型输入:输出比例折算。</p>
+            </div>
+
+            <div className="panel wide">
+              <div className="panelTitle">
+                <AlertTriangle size={18} />
+                <h2>关键假设敏感性表</h2>
+              </div>
+              <div className="tableWrap">
+                <table className="financialTable analysisTable">
+                  <thead>
+                    <tr>
+                      <th>情景</th>
+                      <th>Tokens末年现金ROI</th>
+                      <th>租卡末年现金ROI</th>
+                      <th>年OPEX</th>
+                      <th>Tokens回本时间</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {sensitivityRows.map((row) => (
+                      <tr key={row.name}>
+                        <td>{row.name}</td>
+                        <td>{row.tokenRoi.toFixed(1)}%</td>
+                        <td>{row.rentalRoi.toFixed(1)}%</td>
+                        <td>{formatMoney(row.annualOpex)}</td>
+                        <td>{row.tokenPayback > scenario.years ? `${scenario.years}年内未回本` : `${row.tokenPayback.toFixed(1)}年`}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+              <p className="chartNote">
+                敏感性不替代正式压力测试，但能快速暴露最脆弱的假设：Tokens业务通常对成交系数和价格年降更敏感，租卡业务通常对卡时租价和利用率更敏感。
+              </p>
             </div>
           </section>
 
@@ -1050,7 +1409,7 @@ export default function App() {
                     <th>理论TPS/卡</th>
                     <th>TPS/卡</th>
                     <th>年输出</th>
-                    <th>年收入</th>
+                    <th>年收入口径</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -1084,6 +1443,10 @@ export default function App() {
                             step={100}
                             onChange={(event) => updateModel(model.id, { allocatedCards: Number(event.target.value) })}
                           />
+                          <small>
+                            实算 {modelResult?.allocatedCards.toLocaleString() ?? "-"} 张
+                            {modelResult?.warning ? `；${modelResult.warning}` : ""}
+                          </small>
                         </td>
                         <td>
                           <span>{model.totalParamsB}B / {model.activeParamsB}B</span>
@@ -1128,7 +1491,10 @@ export default function App() {
                         <td>{modelResult?.engineeringTpsPerCard.toFixed(1)}</td>
                         <td>{modelResult?.practicalTpsPerCard.toFixed(1)}</td>
                         <td>{modelResult ? formatTokens(modelResult.annualOutputTokens) : "-"}</td>
-                        <td>{modelResult ? formatMoney(modelResult.annualRevenue) : "-"}</td>
+                        <td>
+                          <strong>{modelResult ? formatMoney(modelResult.annualRevenue * netRevenueFactor) : "-"}</strong>
+                          <small>官方价 {modelResult ? formatMoney(modelResult.annualRevenue) : "-"}</small>
+                        </td>
                       </tr>
                     );
                   })}
@@ -1145,7 +1511,7 @@ export default function App() {
               </div>
               <dl className="specList">
                 <div><dt>服务器台数</dt><dd>{result.sizing.serverCount.toLocaleString()}台</dd></div>
-                <div><dt>单台配置</dt><dd>{scenario.infra.cardsPerServer}x {scenario.accelerator.name}，双CPU，2TB DDR5，8x NVMe，2x400G NIC</dd></div>
+                <div><dt>单台配置</dt><dd>{scenario.infra.cardsPerServer}x {scenario.accelerator.name}，双CPU，2TB DDR5，8x NVMe，{scenario.infra.nicPortsPerServer}x400G NIC</dd></div>
                 <div><dt>单卡规格</dt><dd>{scenario.accelerator.memoryGb}GB HBM，{scenario.accelerator.memoryBandwidthGbps}GB/s，{scenario.accelerator.fp16Tflops}TFLOPS FP16，TDP {scenario.accelerator.tdpWatts}W</dd></div>
                 <div><dt>非GPU单价</dt><dd>{formatMoney(scenario.infra.serverBasePriceRmb)}/台</dd></div>
                 <div><dt>服务器CAPEX</dt><dd>{formatMoney(result.costs.serverCapex)}</dd></div>
@@ -1269,7 +1635,7 @@ export default function App() {
             <article>
               <span>总CAPEX</span>
               <strong>{formatMoney(result.costs.totalCapex)}</strong>
-              <small>5年直线折旧：{formatMoney(result.costs.annualDepreciation)}/年</small>
+              <small>{scenario.financial.depreciationYears}年直线折旧：{formatMoney(result.costs.annualDepreciation)}/年</small>
             </article>
             <article>
               <span>年OPEX</span>
@@ -1415,7 +1781,7 @@ export default function App() {
                 <th>工程TPS/卡</th>
                 <th>实际TPS/卡</th>
                 <th>年输出</th>
-                <th>年收入</th>
+                <th>年收入口径</th>
               </tr>
             </thead>
             <tbody>
@@ -1425,7 +1791,9 @@ export default function App() {
                   <tr key={model.id}>
                     <td>{model.name}</td>
                     <td>{(model.priceMode ?? "market") === "manual" ? "手动价" : "市场价"}</td>
-                    <td>{model.allocatedCards.toLocaleString()}</td>
+                    <td>
+                      填写 {model.allocatedCards.toLocaleString()} / 实算 {modelResult?.allocatedCards.toLocaleString() ?? "-"}
+                    </td>
                     <td>{model.totalParamsB}B / {model.activeParamsB}B</td>
                     <td>{model.inputPricePerMTok.toFixed(2)}元/百万</td>
                     <td>{model.outputPricePerMTok.toFixed(2)}元/百万</td>
@@ -1433,7 +1801,9 @@ export default function App() {
                     <td>{modelResult?.engineeringTpsPerCard.toFixed(1) ?? "-"}</td>
                     <td>{modelResult?.practicalTpsPerCard.toFixed(1) ?? "-"}</td>
                     <td>{modelResult ? formatTokens(modelResult.annualOutputTokens) : "-"}</td>
-                    <td>{modelResult ? formatMoney(modelResult.annualRevenue) : "-"}</td>
+                    <td>
+                      净收入 {modelResult ? formatMoney(modelResult.annualRevenue * netRevenueFactor) : "-"}；官方价 {modelResult ? formatMoney(modelResult.annualRevenue) : "-"}
+                    </td>
                   </tr>
                 );
               })}

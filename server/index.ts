@@ -118,14 +118,14 @@ app.get("/api/market/refresh", async (_req, res) => {
       label: "火山引擎/扣子模型费用",
       url: "https://www.volcengine.com/docs/84458/1585097",
       parser: (text: string) => {
-        const doubaoCode = parseCashPerK(getNearby(text, "Doubao-Seed-2.0-Code"));
+        const doubaoPro = parseCashPerK(getNearby(text, "doubao-seed-2.0-pro") || getNearby(text, "Doubao-Seed-2.0-Pro"));
         const deepseekR1 = parseCashPerK(getNearby(text, "DeepSeek-R1-250528"));
         const glm47 = parseCashPerK(getNearby(text, "GLM-4.7"));
 
-        const doubao = defaults.models.find((item) => item.id === "doubao-seed-code");
-        if (doubao && doubaoCode.length >= 2) {
-          doubao.inputPricePerMTok = doubaoCode[0];
-          doubao.outputPricePerMTok = doubaoCode[1];
+        const doubao = defaults.models.find((item) => item.id === "doubao-seed-pro");
+        if (doubao && doubaoPro.length >= 2) {
+          doubao.inputPricePerMTok = doubaoPro[0];
+          doubao.outputPricePerMTok = doubaoPro[1];
         }
 
         const deepseek = defaults.models.find((item) => item.id === "deepseek-r1");
